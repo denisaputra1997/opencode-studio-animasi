@@ -1,7 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "aigate/combo:openRoute",
-  "default_agent": "masteragent",
   "provider": {
     "aigate": {
       "npm": "@ai-sdk/openai-compatible",

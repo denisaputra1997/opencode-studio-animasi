@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kantor Agent (Isometric)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1b2430;
+        overflow: hidden;
+      }
+      #game {
+        width: 100vw;
+        height: 100vh;
+      }
+      #status {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 10;
+        font: 12px/1.4 monospace;
+        color: #9fb3c8;
+      }
+      #prompt-form {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        gap: 8px;
+        width: min(560px, 90vw);
+      }
+      #prompt-input {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid #34495e;
+        border-radius: 6px;
+        background: #22303f;
+        color: #ecf0f1;
+        font: 13px monospace;
+      }
+      #prompt-form button {
+        padding: 10px 16px;
+        border: 0;
+        border-radius: 6px;
+        background: #2ecc71;
+        color: #1b2430;
+        font: bold 13px monospace;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">menghubungkan…</div>
+    <div id="game"></div>
+    <form id="prompt-form">
+      <input
+        id="prompt-input"
+        type="text"
+        placeholder="Tulis prompt proyek…"
+        autocomplete="off"
+      />
+      <button type="submit">Kirim</button>
+    </form>
+    <script type="module" src="/src/game.js"></script>
+  </body>
+</html>
