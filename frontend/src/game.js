@@ -2,11 +2,17 @@ import Phaser from "phaser";
 
 const WS_URL = "ws://localhost:8000/ws";
 const API_URL = "http://localhost:8000/project";
+const STOP_URL = "http://localhost:8000/stop";
+const PROJECTS_URL = "http://localhost:8000/projects";
+const API_HOST = "http://localhost:8000";
 const TILE_W = 120;
 const TILE_H = 60;
 const DEPTH = 24;
-const COLS = 3;
-const ORIGIN_Y = 190;
+const COLS = 4;
+const COL_GAP = 160;
+const ROW_GAP = 165;
+const MASTER_Y = 190;
+const TOP_Y = 300;
 
 const STATE_COLOR = {
   DEFAULT: 0x3b4a5a,
@@ -28,11 +34,17 @@ const STATE_LABEL = {
 const SHIRTS = [
   0xe74c3c, 0x3498db, 0x9b59b6, 0xf1c40f, 0x1abc9c, 0xe67e22, 0xec407a, 0x5c6bc0,
 ];
+const SKIN = [0xf2c9a0, 0xe8b98d, 0xd9a06b, 0xb07a4a, 0x8d5524];
+const HAIR = [0x3e2723, 0x212121, 0x5d4037, 0x1c1c1c, 0x4e342e, 0xd4a017, 0x795548];
 
-function shirtColor(role) {
-  let h = 0;
-  for (const ch of role) h = (h * 31 + ch.charCodeAt(0)) % 9973;
-  return SHIRTS[h % SHIRTS.length];
+function hashStr(str, salt = 0) {
+  let h = (salt + 1) * 7919;
+  for (const ch of str) h = (h * 31 + ch.charCodeAt(0)) % 99991;
+  return h;
+}
+
+function pick(list, str, salt) {
+  return list[hashStr(str, salt) % list.length];
 }
 
 function toPoints(flat) {
@@ -62,16 +74,32 @@ class Desk extends Phaser.GameObjects.Container {
     this.add(shadow);
 
     this.char = scene.add.container(0, -22);
+    const skin = pick(SKIN, label, 1);
+    const hair = pick(HAIR, label, 2);
+    const shirt = pick(SHIRTS, label, 0);
     const body = scene.add.graphics();
-    body.fillStyle(shirtColor(label), 1);
+    body.fillStyle(shirt, 1);
     body.fillRoundedRect(-13, -28, 26, 34, 9);
-    body.fillStyle(0xf2c9a0, 1);
+    body.fillRoundedRect(-20, -25, 7, 21, 3.5);
+    body.fillRoundedRect(13, -25, 7, 21, 3.5);
+    body.fillStyle(0xffffff, 0.9);
+    body.fillTriangle(-5, -28, 5, -28, 0, -19);
+    body.fillStyle(skin, 1);
+    body.fillCircle(-16.5, -4, 3.3);
+    body.fillCircle(16.5, -4, 3.3);
     body.fillCircle(0, -40, 12);
+    body.fillCircle(-11.5, -40, 3);
+    body.fillCircle(11.5, -40, 3);
+    body.fillStyle(hair, 1);
+    body.fillEllipse(0, -50, 26, 14);
+    body.fillRoundedRect(-12.5, -51, 25, 9, 4);
     body.fillStyle(0x2c3e50, 1);
-    body.fillCircle(-4, -42, 1.8);
-    body.fillCircle(4, -42, 1.8);
-    body.fillStyle(0x3e2723, 1);
-    body.fillEllipse(0, -50, 26, 12);
+    body.fillCircle(-4, -41, 1.8);
+    body.fillCircle(4, -41, 1.8);
+    body.lineStyle(1.5, 0x8d5524, 1);
+    body.beginPath();
+    body.arc(0, -35, 4.5, Math.PI * 0.15, Math.PI * 0.85);
+    body.strokePath();
     this.char.add(body);
     this.add(this.char);
 
@@ -400,6 +428,17 @@ function drawWhiteboard(scene, x, y) {
   return g;
 }
 
+const DIVISIONS = [
+  ["storyboard", "Storyboard Artist"],
+  ["designer", "Character Designer"],
+  ["animator", "Animator"],
+  ["colorist", "Colorist"],
+  ["background", "Background Artist"],
+  ["compositor", "Compositor"],
+  ["editor", "Editor"],
+  ["sound", "Sound Designer"],
+];
+
 class StudioScene extends Phaser.Scene {
   constructor() {
     super("studio");
@@ -409,10 +448,10 @@ class StudioScene extends Phaser.Scene {
 
   create() {
     this.drawFloor();
-    drawWhiteboard(this, this.scale.width / 2 - 300, 118).setDepth(5);
-    drawClock(this, this.scale.width / 2 + 300, 118).setDepth(5);
-    drawPlant(this, 70, 540).setDepth(5);
-    drawPlant(this, this.scale.width - 70, 540).setDepth(5);
+    drawWhiteboard(this, this.scale.width / 2 - 300, 96).setDepth(5);
+    drawClock(this, this.scale.width / 2 + 300, 96).setDepth(5);
+    drawPlant(this, 70, 380).setDepth(5);
+    drawPlant(this, this.scale.width - 70, 380).setDepth(5);
 
     this.add
       .text(this.scale.width / 2, 34, "OpenCode Studio - Animasi", {
@@ -424,6 +463,7 @@ class StudioScene extends Phaser.Scene {
       .setDepth(50);
 
     this.addDesk("masteragent", "masteragent");
+    for (const [id, role] of DIVISIONS) this.addDesk(id, role);
     this.connect();
 
     this.time.addEvent({
@@ -440,10 +480,10 @@ class StudioScene extends Phaser.Scene {
 
   drawFloor() {
     const cx = this.scale.width / 2;
-    const A = { x: cx, y: 140 };
-    const B = { x: cx - 330, y: 340 };
-    const C = { x: cx + 330, y: 340 };
-    const D = { x: cx, y: 540 };
+    const A = { x: cx, y: 120 };
+    const B = { x: cx - 560, y: 330 };
+    const C = { x: cx + 560, y: 330 };
+    const D = { x: cx, y: 660 };
     const g = this.add.graphics();
     g.fillStyle(0x22303f, 1);
     g.fillPoints(toPoints([A.x, A.y, C.x, C.y, D.x, D.y, B.x, B.y]), true);
@@ -452,7 +492,7 @@ class StudioScene extends Phaser.Scene {
       x: A.x + u * (B.x - A.x) + v * (C.x - A.x),
       y: A.y + u * (B.y - A.y) + v * (C.y - A.y),
     });
-    const N = 8;
+    const N = 10;
     g.lineStyle(1, 0x2c3e50, 0.9);
     for (let i = 0; i <= N; i++) {
       const t = i / N;
@@ -466,27 +506,24 @@ class StudioScene extends Phaser.Scene {
     g.setDepth(0);
   }
 
-  iso(gx, gy) {
-    const cx = this.scale.width / 2;
-    return {
-      x: cx + (gx - gy) * (TILE_W / 2),
-      y: ORIGIN_Y + (gx + gy) * (TILE_H / 2),
-    };
-  }
-
   layout() {
+    const cx = this.scale.width / 2;
+
     if (this.desks.masteragent) {
-      const { x, y } = this.iso(0, 0);
-      this.desks.masteragent.setPosition(x, y);
+      this.desks.masteragent.setPosition(cx, MASTER_Y);
+      this.desks.masteragent.setDepth(MASTER_Y);
     }
 
     const n = this.order.length;
     for (let i = 0; i < n; i++) {
-      const row = 1 + Math.floor(i / COLS);
-      const colsInRow = Math.min(COLS, n - Math.floor(i / COLS) * COLS);
-      const gx = row - (colsInRow - 1) / 2 + (i % COLS);
-      const { x, y } = this.iso(gx, row);
-      this.desks[this.order[i]].setPosition(x, y);
+      const row = Math.floor(i / COLS);
+      const col = i % COLS;
+      const colsInRow = Math.min(COLS, n - row * COLS);
+      const x = cx + (col - (colsInRow - 1) / 2) * COL_GAP;
+      const y = TOP_Y + row * ROW_GAP;
+      const desk = this.desks[this.order[i]];
+      desk.setPosition(x, y);
+      desk.setDepth(y);
     }
   }
 
@@ -551,6 +588,51 @@ new Phaser.Game({
 const form = document.getElementById("prompt-form");
 const input = document.getElementById("prompt-input");
 const statusEl = document.getElementById("status");
+const stopBtn = document.getElementById("stop-btn");
+const outputEl = document.getElementById("output");
+
+function watchProject(slug) {
+  const started = Date.now();
+  const tick = async () => {
+    try {
+      const res = await fetch(PROJECTS_URL);
+      const data = await res.json();
+      const project = (data.projects || []).find((p) => p.slug === slug);
+      if (project) {
+        const files = (project.files || []).map((f) => `<li>${f}</li>`).join("");
+        outputEl.style.display = "block";
+        if (project.animation) {
+          const url = `${API_HOST}/${project.animation}`;
+          outputEl.innerHTML =
+            `Proyek <b>${project.slug}</b><br>` +
+            `<a href="${url}" target="_blank">▶ Putar animasi</a>` +
+            `<ul>${files}</ul>`;
+          statusEl.textContent = `animasi siap: ${project.animation}`;
+          return;
+        }
+        outputEl.innerHTML = `Proyek <b>${project.slug}</b><br>menyusun animasi…<ul>${files}</ul>`;
+      }
+    } catch {
+      /* abaikan, coba lagi */
+    }
+    if (Date.now() - started < 180000) setTimeout(tick, 2500);
+  };
+  tick();
+}
+
+if (stopBtn) {
+  stopBtn.addEventListener("click", async () => {
+    statusEl.textContent = "menghentikan aktivitas…";
+    try {
+      const res = await fetch(STOP_URL, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      statusEl.textContent = `dihentikan: ${data.stopped.length} agent`;
+    } catch (err) {
+      statusEl.textContent = `gagal: ${err.message}`;
+    }
+  });
+}
 
 if (form) {
   form.addEventListener("submit", async (event) => {
@@ -559,6 +641,7 @@ if (form) {
     if (!prompt) return;
 
     statusEl.textContent = "mengirim prompt…";
+    if (outputEl) outputEl.style.display = "none";
     try {
       const res = await fetch(API_URL, {
         method: "POST",
@@ -567,8 +650,9 @@ if (form) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      statusEl.textContent = `rencana dibuat: ${data.subtasks.length} sub-tugas`;
+      statusEl.textContent = `rencana dibuat: ${data.subtasks.length} sub-tugas → ${data.project}/`;
       input.value = "";
+      watchProject(data.project.split("/").pop());
     } catch (err) {
       statusEl.textContent = `gagal: ${err.message}`;
     }

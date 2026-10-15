@@ -5,10 +5,23 @@ from contextlib import asynccontextmanager
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agents.masteragent import make_plan, plan_to_events
+from agents.masteragent import make_plan, plan_to_events, write_animation_spec, write_asset
 from app.events import ActivityStore, log_path_from_env, normalize, parse_log_line, tail_log
+from app.workspace import (
+    ANIMATION_FILENAME,
+    OUTPUT_ROOT,
+    asset_filename,
+    build_asset_text,
+    fallback_animation_html,
+    list_projects,
+    make_project_dir,
+    read_project_files,
+    relative_to_output,
+    render_animation_html,
+)
 
 AGENTS = [
     {"agent_id": "masteragent", "role": "masteragent"},
@@ -42,6 +55,93 @@ async def broadcast(event: dict) -> None:
 
 
 store = ActivityStore(broadcast)
+
+project_tasks: set[asyncio.Task] = set()
+
+
+def spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    project_tasks.add(task)
+    task.add_done_callback(project_tasks.discard)
+    return task
+
+
+async def run_subtask(event: dict, prompt: str, project_dir, index: int) -> None:
+    """Kerjakan satu sub-tugas: buat folder/file deliverable, lalu tandai DONE."""
+    agent_id = event["agent_id"]
+    role = event.get("role") or agent_id
+    task = event.get("task_description") or ""
+    base = {"agent_id": agent_id, "role": role, "task_description": task}
+
+    await store.publish(
+        {**base, "state": "WORKING", "progress": None, "task_description": f"{task} → menyiapkan berkas…"},
+        "prompt",
+    )
+    try:
+        body = await write_asset(role, task, prompt)
+    except Exception as exc:
+        body = f"Draft otomatis (LLM tidak tersedia: {exc}).\n\n- {task}"
+
+    path = project_dir / asset_filename(agent_id, index)
+    path.write_text(build_asset_text(role, agent_id, task, prompt, body), encoding="utf-8")
+    rel = relative_to_output(path)
+
+    await store.publish(
+        {**base, "state": "DONE", "progress": 1.0, "task_description": f"{task} → {rel}"},
+        "prompt",
+    )
+
+
+async def run_project(prompt: str, project_dir, tasks: list[asyncio.Task]) -> None:
+    """Tunggu semua rancangan divisi selesai, lalu wujudkan file animasinya."""
+    await asyncio.gather(*tasks, return_exceptions=True)
+    files = read_project_files(project_dir)
+
+    await store.publish(
+        normalize(
+            {
+                "agent_id": "compositor",
+                "role": "Compositor",
+                "state": "WORKING",
+                "task_description": "Mewujudkan animasi dari rancangan tiap divisi…",
+            },
+            "prompt",
+        )
+    )
+    try:
+        spec = await write_animation_spec(prompt, files)
+        html = render_animation_html(prompt, spec)
+        note = ""
+    except Exception as exc:
+        html = fallback_animation_html(prompt, files)
+        note = f" (mode cadangan: {exc})"
+
+    path = project_dir / ANIMATION_FILENAME
+    path.write_text(html, encoding="utf-8")
+    rel = relative_to_output(path)
+
+    await store.publish(
+        normalize(
+            {
+                "agent_id": "compositor",
+                "role": "Compositor",
+                "state": "DONE",
+                "task_description": f"Animasi siap → {rel}{note}",
+            },
+            "prompt",
+        )
+    )
+    await store.publish(
+        normalize(
+            {
+                "agent_id": "masteragent",
+                "role": "masteragent",
+                "state": "DONE",
+                "task_description": f"Proyek selesai → {rel}",
+            },
+            "prompt",
+        )
+    )
 
 
 async def event_producer() -> None:
@@ -80,6 +180,8 @@ async def lifespan(app: FastAPI):
     yield
     for task in tasks:
         task.cancel()
+    for task in list(project_tasks):
+        task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -90,6 +192,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/output", StaticFiles(directory=str(OUTPUT_ROOT)), name="output")
 
 
 class ProjectRequest(BaseModel):
@@ -138,6 +243,7 @@ async def submit_project(req: ProjectRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"Gagal memanggil LLM: {exc}") from exc
 
     events = plan_to_events(plan)
+    project_dir, project_slug = make_project_dir(req.prompt)
     sent = await store.publish_many(events, source="prompt")
     await store.publish(
         normalize(
@@ -145,12 +251,34 @@ async def submit_project(req: ProjectRequest) -> dict:
                 "agent_id": "masteragent",
                 "role": "masteragent",
                 "state": "DONE",
-                "task_description": f"Rencana siap: {len(events)} sub-tugas",
+                "task_description": f"Rencana siap: {len(events)} sub-tugas → output/{project_slug}/",
             },
             "prompt",
         )
     )
-    return {"subtasks": sent}
+    subtask_tasks = [
+        spawn(run_subtask(event, req.prompt, project_dir, index))
+        for index, event in enumerate(sent, start=1)
+    ]
+    if subtask_tasks:
+        spawn(run_project(req.prompt, project_dir, subtask_tasks))
+    return {"subtasks": sent, "project": relative_to_output(project_dir)}
+
+
+@app.get("/projects")
+async def get_projects() -> dict:
+    """Daftar proyek + status file dan animasinya (untuk link di UI)."""
+    return {"projects": list_projects()}
+
+
+@app.post("/stop")
+async def stop_all() -> dict:
+    """Hentikan semua sub-tugas yang berjalan dan reset semua agent ke IDLE."""
+    for task in list(project_tasks):
+        task.cancel()
+    project_tasks.clear()
+    stopped = await store.reset()
+    return {"stopped": stopped}
 
 
 @app.post("/events")

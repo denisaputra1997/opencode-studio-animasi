@@ -113,6 +113,22 @@ class ActivityStore:
                 sent.append(event)
         return sent
 
+    async def reset(self, state: str = "IDLE", task: str = "Dihentikan") -> list[dict]:
+        """Set semua agent ke state tertentu (default IDLE) dan broadcast."""
+        sent = []
+        for agent_id, event in list(self.snapshot.items()):
+            new = {
+                **event,
+                "state": state,
+                "task_description": task,
+                "progress": None,
+                "ts": time.time(),
+            }
+            published = await self.publish(new)
+            if published:
+                sent.append(published)
+        return sent
+
     @staticmethod
     def _same(new: dict, old: dict | None) -> bool:
         if not old:

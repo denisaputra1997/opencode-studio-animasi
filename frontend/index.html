@@ -24,6 +24,33 @@
         font: 12px/1.4 monospace;
         color: #9fb3c8;
       }
+      #output {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        z-index: 10;
+        max-width: 340px;
+        font: 12px/1.5 monospace;
+        color: #ecf0f1;
+        background: rgba(34, 48, 63, 0.92);
+        border: 1px solid #34495e;
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: none;
+      }
+      #output a {
+        color: #2ecc71;
+        font-weight: bold;
+        text-decoration: none;
+      }
+      #output a:hover {
+        text-decoration: underline;
+      }
+      #output ul {
+        margin: 6px 0 0;
+        padding-left: 16px;
+        color: #9fb3c8;
+      }
       #prompt-form {
         position: fixed;
         bottom: 20px;
@@ -52,10 +79,15 @@
         font: bold 13px monospace;
         cursor: pointer;
       }
+      #prompt-form #stop-btn {
+        background: #e74c3c;
+        color: #ecf0f1;
+      }
     </style>
   </head>
   <body>
     <div id="status">menghubungkan…</div>
+    <div id="output"></div>
     <div id="game"></div>
     <form id="prompt-form">
       <input
@@ -65,6 +97,7 @@
         autocomplete="off"
       />
       <button type="submit">Kirim</button>
+      <button type="button" id="stop-btn">Stop</button>
     </form>
     <script type="module" src="/src/game.js"></script>
   </body>
