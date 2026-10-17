@@ -3,91 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kantor Agent (Isometric)</title>
-    <style>
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        background: #1b2430;
-        overflow: hidden;
-      }
-      #game {
-        width: 100vw;
-        height: 100vh;
-      }
-      #status {
-        position: fixed;
-        top: 8px;
-        left: 8px;
-        z-index: 10;
-        font: 12px/1.4 monospace;
-        color: #9fb3c8;
-      }
-      #output {
-        position: fixed;
-        top: 8px;
-        right: 8px;
-        z-index: 10;
-        max-width: 340px;
-        font: 12px/1.5 monospace;
-        color: #ecf0f1;
-        background: rgba(34, 48, 63, 0.92);
-        border: 1px solid #34495e;
-        border-radius: 8px;
-        padding: 10px 12px;
-        display: none;
-      }
-      #output a {
-        color: #2ecc71;
-        font-weight: bold;
-        text-decoration: none;
-      }
-      #output a:hover {
-        text-decoration: underline;
-      }
-      #output ul {
-        margin: 6px 0 0;
-        padding-left: 16px;
-        color: #9fb3c8;
-      }
-      #prompt-form {
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 10;
-        display: flex;
-        gap: 8px;
-        width: min(560px, 90vw);
-      }
-      #prompt-input {
-        flex: 1;
-        padding: 10px 12px;
-        border: 1px solid #34495e;
-        border-radius: 6px;
-        background: #22303f;
-        color: #ecf0f1;
-        font: 13px monospace;
-      }
-      #prompt-form button {
-        padding: 10px 16px;
-        border: 0;
-        border-radius: 6px;
-        background: #2ecc71;
-        color: #1b2430;
-        font: bold 13px monospace;
-        cursor: pointer;
-      }
-      #prompt-form #stop-btn {
-        background: #e74c3c;
-        color: #ecf0f1;
-      }
-    </style>
+    <title>OpenCode Studio — Kantor Agent (Isometric)</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="status">menghubungkan…</div>
     <div id="output"></div>
+    <div id="legend">
+      <span><i style="background: #95a5a6"></i>IDLE</span>
+      <span><i style="background: #2ecc71"></i>WORKING</span>
+      <span><i style="background: #3498db"></i>THINKING</span>
+      <span><i style="background: #f1c40f"></i>DONE</span>
+      <span><i style="background: #e74c3c"></i>BLOCKED</span>
+      <span><i style="background: #9b59b6"></i>MEETING</span>
+    </div>
     <div id="game"></div>
     <form id="prompt-form">
       <input

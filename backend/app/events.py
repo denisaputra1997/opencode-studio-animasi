@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Awaitable, Callable
 
-STATES = {"WORKING", "IDLE", "THINKING", "DONE", "BLOCKED"}
+STATES = {"WORKING", "IDLE", "THINKING", "DONE", "BLOCKED", "MEETING"}
 
 STATE_ALIASES = {
     "working": "WORKING", "work": "WORKING", "busy": "WORKING",
@@ -24,6 +24,8 @@ STATE_ALIASES = {
     "error": "BLOCKED", "fail": "BLOCKED", "failed": "BLOCKED",
     "blocked": "BLOCKED", "gagal": "BLOCKED", "exception": "BLOCKED",
     "idle": "IDLE", "wait": "IDLE", "waiting": "IDLE", "ready": "IDLE",
+    "meeting": "MEETING", "meet": "MEETING", "handoff": "MEETING",
+    "briefing": "MEETING",
 }
 
 LOG_RE = re.compile(

@@ -70,12 +70,14 @@ export const AnimasiStudioPlugin: Plugin = async () => {
     task_description?: string
     progress?: number
     role?: string
+    meeting?: "start" | "end"
   }) => {
     if (!ENABLED) return
+    const signature = `${event.state}:${event.meeting ?? ""}`
     const prev = last[event.agent_id]
     const now = Date.now()
-    if (prev && prev.s === event.state && now - prev.t < THROTTLE_MS) return
-    last[event.agent_id] = { t: now, s: event.state }
+    if (prev && prev.s === signature && now - prev.t < THROTTLE_MS) return
+    last[event.agent_id] = { t: now, s: signature }
 
     const payload = {
       role: ROLES[event.agent_id] ?? event.agent_id,
@@ -118,6 +120,7 @@ export const AnimasiStudioPlugin: Plugin = async () => {
           agent_id: div,
           state: "THINKING",
           task_description: short(args.description) || `Delegasi: ${div}`,
+          meeting: "start",
         })
         return
       }
@@ -132,6 +135,7 @@ export const AnimasiStudioPlugin: Plugin = async () => {
           agent_id: div,
           state: "DONE",
           task_description: short(args.description) || `Selesai: ${div}`,
+          meeting: "end",
         })
         return
       }

@@ -10,10 +10,8 @@ MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1000"))
 ANIM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS_ANIM", "2000"))
 
 DEFAULT_MODELS = [
-    "provider:OpenRouter:anthropic/claude-sonnet-5.5",
-    "provider:OpenRouter:openai/gpt-6-luna",
-    "provider:OpenRouter:qwen/qwen3.8-max-prime",
-    "provider:OpenRouter:upstage/solar-mini4",
+    "provider:gemini-1.5-flash:models/gemini-3.8-flash",
+    "provider:qrog1:qwen/qwen3.8-27b",
 ]
 MODELS = [m.strip() for m in os.getenv("LLM_MODEL", ",".join(DEFAULT_MODELS)).split(",") if m.strip()]
 

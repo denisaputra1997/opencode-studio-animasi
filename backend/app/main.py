@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -43,6 +44,8 @@ TASKS = [
 
 SIM_STATES = ["THINKING", "WORKING", "WORKING", "DONE", "BLOCKED", "IDLE"]
 
+MEETING_SECONDS = float(os.getenv("STUDIO_MEETING_SECONDS", "3.0"))
+
 connected: set[WebSocket] = set()
 
 
@@ -52,6 +55,18 @@ async def broadcast(event: dict) -> None:
             await ws.send_json(event)
         except Exception:
             connected.discard(ws)
+
+
+def meeting_message(phase: str, agent_id: str, task: str, meeting_id: str) -> dict:
+    """Event khusus: masteragent memberi tugas ke sub-agent di ruang meeting."""
+    return {
+        "type": "meeting",
+        "phase": phase,
+        "meeting_id": meeting_id,
+        "participants": ["masteragent", agent_id],
+        "agent_id": agent_id,
+        "task": task,
+    }
 
 
 store = ActivityStore(broadcast)
@@ -64,6 +79,51 @@ def spawn(coro) -> asyncio.Task:
     project_tasks.add(task)
     task.add_done_callback(project_tasks.discard)
     return task
+
+
+async def handoff_meeting(event: dict) -> None:
+    """Masteragent memanggil sub-agent ke ruang meeting untuk menyerahkan tugas."""
+    agent_id = event["agent_id"]
+    role = event.get("role") or agent_id
+    task = event.get("task_description") or ""
+    meeting_id = uuid.uuid4().hex
+
+    await broadcast(meeting_message("start", agent_id, task, meeting_id))
+    await store.publish(
+        normalize(
+            {
+                "agent_id": "masteragent",
+                "role": "masteragent",
+                "state": "MEETING",
+                "task_description": f"Briefing {role}: {task}",
+            },
+            "prompt",
+        )
+    )
+    await store.publish(
+        normalize(
+            {
+                "agent_id": agent_id,
+                "role": role,
+                "state": "MEETING",
+                "task_description": f"Menerima tugas: {task}",
+            },
+            "prompt",
+        )
+    )
+    await asyncio.sleep(MEETING_SECONDS)
+    await broadcast(meeting_message("end", agent_id, task, meeting_id))
+    await store.publish(
+        normalize(
+            {
+                "agent_id": "masteragent",
+                "role": "masteragent",
+                "state": "IDLE",
+                "task_description": "Kembali ke meja",
+            },
+            "prompt",
+        )
+    )
 
 
 async def run_subtask(event: dict, prompt: str, project_dir, index: int) -> None:
@@ -92,9 +152,16 @@ async def run_subtask(event: dict, prompt: str, project_dir, index: int) -> None
     )
 
 
-async def run_project(prompt: str, project_dir, tasks: list[asyncio.Task]) -> None:
-    """Tunggu semua rancangan divisi selesai, lalu wujudkan file animasinya."""
-    await asyncio.gather(*tasks, return_exceptions=True)
+async def run_pipeline(prompt: str, project_dir, events: list[dict]) -> None:
+    """Alur produksi: meeting per tugas → tiap divisi berkarya → wujudkan animasi."""
+    for index, event in enumerate(events, start=1):
+        await handoff_meeting(event)
+        await run_subtask(event, prompt, project_dir, index)
+    await run_project(prompt, project_dir)
+
+
+async def run_project(prompt: str, project_dir) -> None:
+    """Setelah semua rancangan divisi selesai, wujudkan file animasinya."""
     files = read_project_files(project_dir)
 
     await store.publish(
@@ -256,12 +323,8 @@ async def submit_project(req: ProjectRequest) -> dict:
             "prompt",
         )
     )
-    subtask_tasks = [
-        spawn(run_subtask(event, req.prompt, project_dir, index))
-        for index, event in enumerate(sent, start=1)
-    ]
-    if subtask_tasks:
-        spawn(run_project(req.prompt, project_dir, subtask_tasks))
+    if sent:
+        spawn(run_pipeline(req.prompt, project_dir, sent))
     return {"subtasks": sent, "project": relative_to_output(project_dir)}
 
 
@@ -285,6 +348,12 @@ async def stop_all() -> dict:
 async def push_events(payload: dict = Body(...)) -> dict:
     """Webhook aktivitas: satu event atau {"events": [...]}."""
     raw = payload.get("events") if isinstance(payload.get("events"), list) else [payload]
+    for item in raw:
+        phase = item.get("meeting") if isinstance(item, dict) else None
+        agent_id = str((item or {}).get("agent_id") or "").strip()
+        if phase == "start" and agent_id and agent_id != "masteragent":
+            task = item.get("task_description") or item.get("task") or ""
+            await broadcast(meeting_message("start", agent_id, task, uuid.uuid4().hex))
     sent = await store.publish_many(raw, source="webhook")
     if not sent:
         raise HTTPException(status_code=400, detail="agent_id wajib / event tidak berubah")
