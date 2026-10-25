@@ -1,19 +1,31 @@
 import asyncio
 import os
 import random
+import re
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agents.masteragent import make_plan, plan_to_events, write_animation_spec, write_asset
+from app.masteragent import make_plan, plan_to_events, write_animation_spec, write_asset
+from app.agent_scan import ScanError, scan_project as scan_agent_project
+from app.subagents import (
+    available_divisions,
+    ensure_default_subagents,
+    ensure_plan_subagents,
+    ensure_subagent,
+    list_subagents,
+    subagent_persona,
+)
 from app.events import ActivityStore, log_path_from_env, normalize, parse_log_line, tail_log
 from app.workspace import (
     ANIMATION_FILENAME,
     OUTPUT_ROOT,
+    REPO_ROOT,
     asset_filename,
     build_asset_text,
     fallback_animation_html,
@@ -23,24 +35,6 @@ from app.workspace import (
     relative_to_output,
     render_animation_html,
 )
-
-AGENTS = [
-    {"agent_id": "masteragent", "role": "masteragent"},
-    {"agent_id": "storyboard", "role": "Storyboard Artist"},
-    {"agent_id": "designer", "role": "Character Designer"},
-    {"agent_id": "animator", "role": "Animator"},
-    {"agent_id": "colorist", "role": "Colorist"},
-    {"agent_id": "compositor", "role": "Compositor"},
-]
-
-TASKS = [
-    "Mengoordinasi sub-agent",
-    "Menyusun storyboard adegan",
-    "Mendesain karakter utama",
-    "Menganimasikan adegan pembuka",
-    "Mewarnai keyframe",
-    "Menggabungkan layer latar",
-]
 
 SIM_STATES = ["THINKING", "WORKING", "WORKING", "DONE", "BLOCKED", "IDLE"]
 
@@ -138,7 +132,8 @@ async def run_subtask(event: dict, prompt: str, project_dir, index: int) -> None
         "prompt",
     )
     try:
-        body = await write_asset(role, task, prompt)
+        ensure_subagent(agent_id, role, task)
+        body = await write_asset(role, task, prompt, persona=subagent_persona(agent_id))
     except Exception as exc:
         body = f"Draft otomatis (LLM tidak tersedia: {exc}).\n\n- {task}"
 
@@ -214,7 +209,12 @@ async def run_project(prompt: str, project_dir) -> None:
 async def event_producer() -> None:
     """Simulator opsional (SIMULATE_EVENTS=1) untuk uji canvas tanpa sumber asli."""
     while True:
-        agent = random.choice(AGENTS)
+        divisions = available_divisions()
+        agents = [{"agent_id": "masteragent", "role": "masteragent"}] + [
+            {"agent_id": item["id"], "role": item["role"]} for item in divisions
+        ]
+        tasks = [item["description"] for item in divisions] or ["Mengoordinasi sub-agent"]
+        agent = random.choice(agents)
         state = random.choice(SIM_STATES)
         progress = random.choice([None, None, round(random.random(), 2)]) if state == "WORKING" else None
         await store.publish(
@@ -223,7 +223,7 @@ async def event_producer() -> None:
                     "agent_id": agent["agent_id"],
                     "role": agent["role"],
                     "state": state,
-                    "task_description": random.choice(TASKS),
+                    "task_description": random.choice(tasks),
                     "progress": progress,
                 },
                 "sim",
@@ -234,6 +234,7 @@ async def event_producer() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_default_subagents()
     tasks = []
     if os.getenv("SIMULATE_EVENTS", "0") == "1":
         tasks.append(asyncio.create_task(event_producer()))
@@ -281,6 +282,11 @@ class LogRequest(BaseModel):
     lines: list[str] | None = None
 
 
+class ScanRequest(BaseModel):
+    project_path: str | None = None
+    projectPath: str | None = None
+
+
 @app.post("/project")
 async def submit_project(req: ProjectRequest) -> dict:
     await store.publish(
@@ -309,6 +315,10 @@ async def submit_project(req: ProjectRequest) -> dict:
         )
         raise HTTPException(status_code=502, detail=f"Gagal memanggil LLM: {exc}") from exc
 
+    try:
+        created_subagents = ensure_plan_subagents(plan.subtasks)
+    except Exception:
+        created_subagents = []
     events = plan_to_events(plan)
     project_dir, project_slug = make_project_dir(req.prompt)
     sent = await store.publish_many(events, source="prompt")
@@ -325,13 +335,77 @@ async def submit_project(req: ProjectRequest) -> dict:
     )
     if sent:
         spawn(run_pipeline(req.prompt, project_dir, sent))
-    return {"subtasks": sent, "project": relative_to_output(project_dir)}
+    return {
+        "subtasks": sent,
+        "project": relative_to_output(project_dir),
+        "subagents": [os.path.relpath(path, REPO_ROOT) for path in created_subagents],
+    }
 
 
 @app.get("/projects")
 async def get_projects() -> dict:
-    """Daftar proyek + status file dan animasinya (untuk link di UI)."""
+    """Daftar proyek di folder output beserta status file & animasinya."""
     return {"projects": list_projects()}
+
+
+@app.get("/projects/folders")
+async def get_project_folders() -> dict:
+    """Daftar folder proyek yang tersedia untuk dipilih."""
+    if not OUTPUT_ROOT.exists():
+        return {"folders": []}
+    folders = []
+    for folder in sorted(OUTPUT_ROOT.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not folder.is_dir():
+            continue
+        anim = folder / ANIMATION_FILENAME
+        folders.append(
+            {
+                "slug": folder.name,
+                "name": folder.name,
+                "has_animation": anim.exists(),
+                "modified": folder.stat().st_mtime,
+            }
+        )
+    return {"folders": folders}
+
+
+@app.get("/projects/{slug}/agents")
+async def get_project_agents(slug: str) -> dict:
+    """Ambil agen proyek dari satu sumber: .opencode/agents/SubAgent."""
+    ensure_default_subagents()
+    project_dir = OUTPUT_ROOT / slug
+    if not project_dir.is_dir():
+        return {"agents": [], "error": "Project not found"}
+
+    used: list[str] = []
+    for path in sorted(project_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"^- Divisi:\s*`([^`]+)`", text, re.M)
+        if match:
+            used.append(match.group(1).strip().lower())
+
+    agents = list_subagents()
+    if used:
+        wanted = set(used)
+        selected = [agent for agent in agents if agent["id"] in wanted]
+        if selected:
+            agents = selected
+
+    return {
+        "project": slug,
+        "source": ".opencode/agents/SubAgent",
+        "agents": [
+            {
+                "agent_id": agent["id"],
+                "role": agent["role"],
+                "task_description": agent["description"],
+            }
+            for agent in agents
+        ],
+    }
 
 
 @app.post("/stop")
@@ -377,6 +451,68 @@ async def push_log(req: LogRequest) -> dict:
 @app.get("/agents")
 async def list_agents() -> dict:
     return {"agents": store.snapshot_events()}
+
+
+@app.get("/agents/scan/default")
+def scan_default_path() -> dict:
+    """Direktori awal untuk pemilih proyek di UI utama."""
+    return {"project_path": str(REPO_ROOT)}
+
+
+@app.get("/agents/scan/browse")
+def browse_agents_path(path: str | None = None) -> dict:
+    """Daftar sub-folder untuk dropdown direktori di UI utama."""
+    raw = (path or "").strip() or str(REPO_ROOT)
+    target = Path(raw).expanduser()
+    try:
+        target = target.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=404, detail=f"Direktori tidak ditemukan: {raw}") from None
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"Bukan direktori: {target}")
+
+    dirs = []
+    try:
+        items = sorted(target.iterdir(), key=lambda item: item.name.lower())
+    except OSError as exc:
+        raise HTTPException(status_code=403, detail=f"Tidak bisa membaca folder: {exc}") from exc
+
+    for item in items:
+        if item.name.startswith("."):
+            continue
+        try:
+            if not item.is_dir():
+                continue
+        except OSError:
+            continue
+        dirs.append(
+            {
+                "name": item.name,
+                "path": str(item),
+                "has_agents": (item / ".opencode" / "agents").is_dir(),
+            }
+        )
+        if len(dirs) >= 500:
+            break
+
+    return {
+        "path": str(target),
+        "name": target.name or str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "is_project": (target / ".opencode" / "agents").is_dir(),
+        "dirs": dirs,
+        "home": str(Path.home()),
+        "repo": str(REPO_ROOT),
+    }
+
+
+@app.post("/agents/scan")
+def scan_agents(req: ScanRequest) -> dict:
+    """Pindai .opencode/agents dari direktori proyek yang dipilih."""
+    try:
+        return scan_agent_project(req.project_path or req.projectPath)
+    except ScanError as err:
+        raise HTTPException(status_code=err.status, detail=str(err)) from err
 
 
 @app.websocket("/ws")

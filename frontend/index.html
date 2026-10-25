@@ -4,11 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OpenCode Studio — Kantor Agent (Isometric)</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231b2430'/%3E%3Cpath d='M6 20l10-6 10 6-10 6z' fill='%233498db'/%3E%3Cpath d='M12 8h8v4h-8z' fill='%23ecf0f1'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="status">menghubungkan…</div>
+    <div id="hud">
+      <div id="title">OpenCode Studio — Kantor Animasi</div>
+      <div id="status">menghubungkan…</div>
+    </div>
     <div id="output"></div>
+    <div id="project-selector">
+      <div class="selector-row">
+        <label for="project-folder">Proyek Aktif:</label>
+        <select id="project-folder">
+          <option value="">-- Pilih folder proyek --</option>
+        </select>
+        <button id="refresh-projects" type="button">↻</button>
+      </div>
+      <div class="selector-row">
+        <label for="project-path">Direktori:</label>
+        <select id="project-path" title="Pilih folder = pindai otomatis"></select>
+        <button id="refresh-dirs" type="button" title="Muat ulang isi folder">↻</button>
+      </div>
+    </div>
+    <div id="hint">seret / ← → untuk menggeser · scroll untuk zoom</div>
     <div id="legend">
       <span><i style="background: #95a5a6"></i>IDLE</span>
       <span><i style="background: #2ecc71"></i>WORKING</span>
