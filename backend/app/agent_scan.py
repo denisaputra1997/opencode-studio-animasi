@@ -191,21 +191,10 @@ def list_entries(directory: Path) -> list[tuple[Path, str]]:
 
 
 def find_master_file(agents_dir: Path) -> Path | None:
-    direct = agents_dir / "masteragent.md"
-    if direct.is_file():
-        return direct
-
     try:
         items = sorted(agents_dir.iterdir(), key=lambda item: item.name)
     except OSError:
         return None
-
-    named = next(
-        (item for item in items if item.is_file() and re.match(r"^master-?agent\.(md|json)$", item.name, re.I)),
-        None,
-    )
-    if named is not None:
-        return named
 
     for item in items:
         if not item.is_file() or not re.search(r"\.(md|json)$", item.name, re.I):
@@ -216,21 +205,29 @@ def find_master_file(agents_dir: Path) -> Path | None:
         if re.search(r"master[- ]?agent", entry["name"], re.I) or entry["mode"] == "primary":
             return item
 
-    return None
+    named = next(
+        (item for item in items if item.is_file() and re.match(r"^master-?agent\.(md|json)$", item.name, re.I)),
+        None,
+    )
+    if named is not None:
+        return named
+
+    return items[0] if items else None
 
 
-def find_subagent_dir(agents_dir: Path) -> Path | None:
+def find_subagent_files(agents_dir: Path) -> list[Path]:
+    files: list[Path] = []
     try:
-        return next(
-            (
-                item
-                for item in sorted(agents_dir.iterdir(), key=lambda entry: entry.name)
-                if item.is_dir() and item.name.lower() == "subagent"
-            ),
-            None,
-        )
+        for item in agents_dir.iterdir():
+            if item.is_dir() and not item.name.startswith("."):
+                for subitem in item.iterdir():
+                    if subitem.is_file() and re.search(r"\.(md|json)$", subitem.name, re.I):
+                        files.append(subitem)
+            elif item.is_file() and re.search(r"\.(md|json)$", item.name, re.I):
+                pass
     except OSError:
-        return None
+        pass
+    return sorted(files, key=lambda f: f.name)
 
 
 def resolve_project(project_path: str | None) -> tuple[Path, Path]:
@@ -456,17 +453,11 @@ def scan_project(project_path: str | None) -> dict:
     if masteragent is None:
         warnings.append("masteragent.md tidak ditemukan di .opencode/agents")
 
-    sub_dir = find_subagent_dir(agents_dir)
-    if sub_dir is None:
-        warnings.append("Folder SubAgent tidak ditemukan di .opencode/agents")
+    subagent_files = find_subagent_files(agents_dir)
+    if not subagent_files:
+        warnings.append("Tidak ada file agen di sub-folder .opencode/agents/")
 
-    sources: list[tuple[Path, str]] = list_entries(sub_dir) if sub_dir else []
-    if sub_dir is not None:
-        try:
-            if any(item.is_dir() and not item.name.startswith(".") for item in sub_dir.iterdir()):
-                warnings.append("Sub-folder di .opencode/agents/SubAgent diabaikan")
-        except OSError:
-            pass
+    sources: list[tuple[Path, str]] = [(f, f.stem) for f in subagent_files]
 
     for file, fallback_name in sources:
         entry = read_entry(agents_dir, file, fallback_name)
